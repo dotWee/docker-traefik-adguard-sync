@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import yaml
+import sys
 
 
 def configure_yaml():
@@ -15,16 +16,26 @@ def configure_yaml():
     yaml.add_representer(str, str_presenter)
 
 
-def read_traefik(traefik_path):
+def read_traefik(traefik_path, domain_name):
     logger.info(f'Reading Traefik configuration: {traefik_path}')
     with open(traefik_path, 'r') as f:
         acme_config = json.load(f)
-    cert = base64.b64decode(
-        acme_config['default']['Certificates'][0]['certificate']).decode('utf-8')
-    private_key = base64.b64decode(
-        acme_config['default']['Certificates'][0]['key']).decode('utf-8')
-    return cert, private_key
 
+    # get encode certificates
+    if (not domain_name or domain_name.isspace()):
+        certificate_obj = acme_config['letsencrypt']['Certificates'][0]
+        if not acme_config['letsencrypt']['Certificates'][0]:
+            sys.exit(f'Could not find any certificate in acme.json')
+    else:
+        # search for domain
+        certificate_obj = next((d for d in acme_config['letsencrypt']['Certificates'] if d['domain']['main'] == domain_name), None)
+        if not certificate_obj:
+            sys.exit(f'Could not find any certificate for domain {domain_name}')
+
+    # decrypt base64
+    cert = base64.b64decode(certificate_obj['certificate']).decode('utf-8')
+    private_key = base64.b64decode(certificate_obj['key']).decode('utf-8')
+    return cert, private_key
 
 def has_changed(old, new, item):
     def get_first_lines(s, n):
@@ -79,10 +90,10 @@ def create_backup(adguardhome_path):
     logger.info(f'AdGuardHome configuration backed up to : {backup_path}')
 
 
-def run(traefik_path, adguardhome_path):
+def run(traefik_path, adguardhome_path, domain_name):
     logger.info('Initializing...')
     configure_yaml()
-    cert, key = read_traefik(traefik_path)
+    cert, key = read_traefik(traefik_path, domain_name)
     write_adguardhome(adguardhome_path, cert, key)
     logger.info('Done')
 
@@ -99,6 +110,10 @@ def main():
         '--adguardhome-path',
         help='Path to AdGuard Home\'s AdGuardHome.yaml file',
         default='/AdGuardHome.yaml')
+    parser.add_argument(
+        '--domain-name',
+        help='Domain used for adguard. If not specified, first certificate in acme.json will be used!',
+        default='')
     args = parser.parse_args()
     run(**vars(args))
 
